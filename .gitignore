@@ -1,0 +1,5 @@
+/build/
+/dist/
+/drawio-poc-iis.zip
+node_modules/
+test-results/

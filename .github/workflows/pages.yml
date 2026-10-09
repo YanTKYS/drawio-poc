@@ -1,0 +1,105 @@
+name: build-and-deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # 固定バージョンの公式 draw.io から配信用ファイル (dist/) と IIS 用 ZIP を生成
+      - name: Build dist and drawio-poc-iis.zip
+        run: scripts/build.sh
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+
+      # GitHub Pages と同じサブパス (/drawio-poc/) で配信して検証
+      - name: Smoke test (dist at /drawio-poc/)
+        run: npm test
+
+      # ZIP を展開した内容が dist と同一であり、仮想ディレクトリ配下でも動作することを検証
+      - name: Smoke test (unzipped IIS package at /sites/gov/drawio-poc/)
+        run: |
+          rm -rf build/iis-check && mkdir -p build/iis-check
+          unzip -q drawio-poc-iis.zip -d build/iis-check
+          test -f build/iis-check/index.html
+          diff -r dist build/iis-check
+          DIST_DIR=build/iis-check LOCAL_URL=http://127.0.0.1:4174/sites/gov/drawio-poc/ npm test
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: test-results/
+          if-no-files-found: ignore
+
+      - name: Upload IIS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: drawio-poc-iis
+          path: drawio-poc-iis.zip
+          compression-level: 0
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify-pages:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # 公開された https://yantkys.github.io/drawio-poc/ に対して同じスモークテストを実行
+      - name: Smoke test (deployed GitHub Pages)
+        run: BASE_URL="${{ needs.deploy.outputs.page_url }}" npm test
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-pages
+          path: test-results/
+          if-no-files-found: ignore

@@ -1,0 +1,11 @@
+{
+  "name": "drawio-poc",
+  "private": true,
+  "description": "閉域IIS向け draw.io 静的サイトの検証用 (配信物には含まれない)",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
